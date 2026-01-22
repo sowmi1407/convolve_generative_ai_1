@@ -5,3 +5,4 @@ opencv-python
 Pillow
 git+https://github.com/huggingface/transformers.git
 bitsandbytes>=0.46.1
+accelerate==1.12.0
