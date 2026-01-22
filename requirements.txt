@@ -1,5 +1,7 @@
+numpy<2.0
+torch
 ultralytics
-pyyaml
 opencv-python
-numpy
-
+Pillow
+git+https://github.com/huggingface/transformers.git
+bitsandbytes>=0.46.1

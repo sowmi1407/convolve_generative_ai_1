@@ -30,7 +30,14 @@ from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer
 )
+from huggingface_hub import login
 
+with open('./utils/config.json', 'r') as f:
+    config = json.load(f)
+login(token=config['hf_token'])
+
+def dbg(msg):
+    print(f"[DEBUG] {msg}", flush=True)
 
 class QwenVLStampSignatureExtractor:
     def __init__(
@@ -293,67 +300,113 @@ Return ONLY valid JSON in exactly this format:
 }
 '''
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt}
-                ]
-            }
-        ]
+        try:
+            print("[DEBUG] Applying chat template")
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ]
 
-        text = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-
-        inputs = self.processor(
-            text=text,
-            images=image,
-            return_tensors="pt"
-        ).to(self.device)
-
-        torch.cuda.synchronize()
-
-        start_time = time.perf_counter()
-
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=512,
-                return_dict_in_generate=True,  # Added
-                output_scores=True             # Added
+            text = self.processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
             )
 
-        generated_ids = output_ids[0][inputs["input_ids"].shape[1]:]
-        output_text = self.processor.decode(
-            generated_ids,
-            skip_special_tokens=True
-        ).strip()
+            inputs = self.processor(
+                text=text,
+                images=image,
+                return_tensors="pt"
+            ).to(self.device)
 
-        probs = []
-        for i, token_id in enumerate(generated_ids):
-            # Softmax the logits at each generation step
-            step_probs = torch.softmax(outputs.scores[i][0], dim=-1)
-            # Probability of the token actually chosen
-            probs.append(step_probs[token_id].item())
-        
-        avg_confidence = sum(probs) / len(probs) if probs else 0.0
+            print("[DEBUG] Processor completed")
+        except Exception as e:
+            print(f"[ERROR] Processor failed: {e}")
+            raise
 
-        # Robust JSON extraction
+        # -------------------------
+        # MODEL GENERATION
+        # -------------------------
+        try:
+            print("[DEBUG] Starting model.generate()")
+            torch.cuda.synchronize()
 
-        match = re.search(r"\{[\s\S]*\}", output_text)
-        if not match:
-            raise RuntimeError(f"Failed to extract JSON from model output:\n{output_text}")
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    return_dict_in_generate=True,
+                    output_scores=True
+                )
 
-        result = json.loads(match.group(0))
-        
-        # Attach the raw confidence to the result temporarily
-        result["_internal_conf"] = round(avg_confidence, 4)
+            torch.cuda.synchronize()
+            print("[DEBUG] model.generate() finished")
+        except Exception as e:
+            print(f"[ERROR] model.generate failed: {e}")
+            raise
 
-        # ... [Rest of your extract function] ...
+        # -------------------------
+        # DECODE OUTPUT
+        # -------------------------
+        try:
+            print("[DEBUG] Decoding output")
+            generated_ids = outputs.sequences[0][inputs["input_ids"].shape[1]:]
+
+            output_text = self.processor.decode(
+                generated_ids,
+                skip_special_tokens=True
+            ).strip()
+
+            print("[DEBUG] Raw model output:")
+            print(output_text)
+        except Exception as e:
+            print(f"[ERROR] Decoding failed: {e}")
+            raise
+
+        # -------------------------
+        # CONFIDENCE COMPUTATION
+        # -------------------------
+        try:
+            print("[DEBUG] Computing token confidence")
+            probs = []
+
+            for i, token_id in enumerate(generated_ids):
+                step_logits = outputs.scores[i][0]
+                step_probs = torch.softmax(step_logits, dim=-1)
+                probs.append(step_probs[token_id].item())
+
+            avg_confidence = sum(probs) / len(probs) if probs else 0.0
+            print(f"[DEBUG] Avg confidence: {avg_confidence:.4f}")
+        except Exception as e:
+            print(f"[ERROR] Confidence computation failed: {e}")
+            avg_confidence = 0.0
+
+        # -------------------------
+        # JSON EXTRACTION
+        # -------------------------
+        try:
+            print("[DEBUG] Extracting JSON")
+            match = re.search(r"\{[\s\S]*\}", output_text)
+
+            if not match:
+                print("[ERROR] No JSON found in output")
+                raise RuntimeError("JSON extraction failed")
+
+            result = json.loads(match.group(0))
+            result["_internal_conf"] = round(avg_confidence, 4)
+
+            print("[DEBUG] Parsed JSON:")
+            print(result)
+        except Exception as e:
+            print(f"[ERROR] JSON parsing failed: {e}")
+            raise
+
+        print("[DEBUG] extract() completed successfully")
         return result
 
     
@@ -361,6 +414,7 @@ Return ONLY valid JSON in exactly this format:
 # Global variable to avoid reloading model on every call
 
 def clean_and_refine_result(result, doc_id, device="cuda"):
+    dbg(f"clean_and_refine_result() started for doc_id={doc_id}")
 
     # --------------------------------------------------
     # PART 1: LIGHT RULE-BASED CLEANING (SAFE ONLY)
@@ -372,7 +426,9 @@ def clean_and_refine_result(result, doc_id, device="cuda"):
 
     if result.get("business_name"):
         result["dealer_name"] = result["business_name"].replace("कोटेचन", "").strip()
+        dbg("Initial field cleanup done")
     else:
+        dbg(f"FAILED during initial cleanup: {e}")
         result["dealer_name"] = ""
 
     # Normalize key name for cost
@@ -612,17 +668,29 @@ Input: Brand: "Vahmar", Model: "4015 E2 WD 3 CYLINDER" -> {"model_name": "Solis 
     return final_json ,llm_inference_time
 
 def process_single_file(image_path: str, device: str = "cuda"):
+    dbg(f"process_single_file() started for {image_path}")
+
     extractor = QwenVLStampSignatureExtractor(device=device)
     doc_id = os.path.splitext(os.path.basename(image_path))[0]
 
+    # ---- GUARANTEED RETURNS ----
+    final_json = None
+    total_latency = 0.0
+
     try:
+        dbg("Starting Qwen 7B extraction")
         # -------------------------------
-        # QWEN 7B EXTRACTION TIMING
+        # QWEN 7B EXTRACTION
         # -------------------------------
         t0 = time.perf_counter()
         result = extractor.extract(image_path)
         t1 = time.perf_counter()
+        dbg("Qwen 7B extraction finished")
+      
         qwen_7b_latency = t1 - t0
+
+        # Free heavy model ASAP
+        dbg("Freeing Qwen 7B memory")
 
         del extractor.model
         del extractor.processor
@@ -631,23 +699,37 @@ def process_single_file(image_path: str, device: str = "cuda"):
         torch.cuda.empty_cache()
 
         # -------------------------------
-        # POST-PROCESSING TIMING
+        # POST-PROCESSING
         # -------------------------------
         t2 = time.perf_counter()
-        final_json = clean_and_refine_result(result, doc_id)
+        dbg("Starting post-processing")
+        final_json, post_latency = clean_and_refine_result(result, doc_id)
         t3 = time.perf_counter()
-        post_latency = t3 - t2
+        dbg("Post-processing finished")
 
         total_latency = qwen_7b_latency + post_latency
 
-        # -------------------------------
-        # SAVE FINAL JSON
-        # -------------------------------
-
     except Exception as e:
-         print(f"[ERROR] Failed processing {doc_id}: {e}")
+        dbg(f"PIPELINE FAILED for {doc_id}: {e}")
 
-    return final_json , total_latency
+        print(f"[ERROR] Failed processing {doc_id}: {e}")
+
+        # ---- SAFE FALLBACK JSON ----
+        final_json = {
+            "doc_id": doc_id,
+            "confidence": 0.0,
+            "fields": {
+                "dealer_name": None,
+                "model_name": None,
+                "horse_power": None,
+                "asset_cost": None
+            }
+        }
+        total_latency = 0.0
+    dbg(f"process_single_file() completed for {doc_id}")
+
+    return final_json, total_latency
+
 
 '''
 # --------------------------------------------------
@@ -803,7 +885,7 @@ def main():
     qwen_conf = qwen_final.get("confidence", 0.0)
 
     # 2. RUN SAM/YOLO PIPELINE
-    sam_pipeline = PrecisionJSONPipeline(yolo_path="/content/best.pt")
+    sam_pipeline = PrecisionJSONPipeline(yolo_path="./utils/Models/stamp_signature_detector/best.pt")
     sam_result = sam_pipeline.process_to_json(image_path)
     
     sam_latency = sam_result.get("inference_latency_seconds", 0.0)
