@@ -74,27 +74,57 @@ Install all required dependencies using:
 pip install -r requirements.txt
 ```
 
+Move into the repository directory before running the pipeline:
+
+```bash
+cd repo
+```
+
+---
+
+---
+
+## ⚠️ Important: Hugging Face Authentication
+
+This pipeline relies on **gated Hugging Face models** (notably **SAM 3**).  
+A valid **Hugging Face access token** is therefore **mandatory** for successful execution.
+
+- An authorized token is pre-configured in:
+  ```
+  utils/config.json
+  ```
+
+- **If the provided token is revoked, expired, or invalid**, replace the existing token in `config.json` with your own Hugging Face access token and rerun the executable.
+
+- Instructions for creating and managing Hugging Face access tokens are available here:
+  ```
+  https://huggingface.co/docs/hub/en/security-tokens
+  ```
+
+> **Note:** No additional environment variables or CLI authentication steps are required.  
+> The pipeline reads the token directly from `config.json` at runtime.
+
 ---
 
 ## ▶️ How to Run
 
-After installing the required dependencies, run the pipeline using the following command:
+> **Important:** Ensure that a **valid Hugging Face access token** is present in  
+> `utils/config.json` (see **Hugging Face Authentication** section above) before running the executable.
+
+Run the pipeline using the following command:
 
 ```bash
 python executable.py IMAGE_PATH
 ```
 
-### Arguments
+- `IMAGE_PATH`: Absolute or relative path to the input document image.
 
-- `IMAGE_PATH`  
-  Absolute or relative path to the input document image (e.g., scanned tractor loan quotation).
-
-### Example
-
+Example:
 ```bash
 python executable.py sample_images/loan_quote.jpg
 ```
 
+---
 ### Output
 
 - The pipeline performs end-to-end **extraction, refinement, and segmentation**.
@@ -104,36 +134,6 @@ python executable.py sample_images/loan_quote.jpg
 ```
 sample_output/result.json
 ```
-
----
-
-## 🔒 Gated Model Access (SAM 3)
-
-This pipeline utilizes **Segment Anything Model 3 (SAM 3)**, which is hosted on a **gated Hugging Face repository**.
-
-### Access Requirement
-
-Before execution, ensure that the usage terms for SAM 3 have been accepted at:
-
-```
-https://huggingface.co/facebook/sam3
-```
-
-### Authentication Strategy
-
-For evaluation convenience, an **authorized Hugging Face access token** has been pre-configured in:
-
-```
-utils/config.json
-```
-
-> **Important Note**  
-> Hardcoding access tokens is **not recommended** for production environments due to security best practices.  
-> This approach has been **intentionally adopted** to ensure a **frictionless evaluation experience**, removing the need for:
-> - Manual environment variable configuration  
-> - CLI-based Hugging Face authentication  
-> - Additional setup steps  
-
 ---
 
 ## 🧠 Memory Management Strategy (16 GB VRAM Constraint)
