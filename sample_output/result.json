@@ -1,0 +1,30 @@
+{
+    "doc_id": "172676445_3_pg6",
+    "fields": {
+        "dealer_name": "FATEHGHAR SAHIB TRACTORS",
+        "model_name": "Mahindra NOVO 605 DI 4WD",
+        "horse_power": 49.9,
+        "asset_cost": 900000,
+        "signature": {
+            "present": true,
+            "bbox": [
+                681,
+                1015,
+                874,
+                1149
+            ]
+        },
+        "stamp": {
+            "present": true,
+            "bbox": [
+                563,
+                1046,
+                862,
+                1174
+            ]
+        }
+    },
+    "confidence": 0.9413,
+    "processing_time_sec": 23.7755,
+    "cost_estimate_usd": 0.002972
+}
