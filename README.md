@@ -1,72 +1,180 @@
-# Extract-Refine-Segment (ERS) Pipeline for Document Intelligence
+# Extract–Refine–Segment (ERS) Pipeline for Document Intelligence
 
-[cite_start]This repository contains the official implementation for the **IDFC Convolve 4.0 Challenge**[cite: 3, 9]. [cite_start]The **ERS Pipeline** is a modular, multi-stage architecture designed to handle the complexities of Indian tractor loan quotations, including layout volatility, multilingual scripts, and varying image quality[cite: 8, 9, 18].
+This repository contains the official implementation for the **IDFC Convolve 4.0 Challenge**.
+
+The **Extract–Refine–Segment (ERS) Pipeline** is a modular, multi-stage document intelligence architecture designed to process Indian tractor loan quotations. The system is robust to real-world challenges such as layout volatility, multilingual text, handwritten artifacts, stamps/signatures, and varying image quality.
+
+---
+## 🧩 Pipeline Overview
+
+The ERS system consists of **two parallel branches** that operate independently and are merged into a final structured output:
+
+### 1. Text / Information Extraction Branch
+- Uses **vision-language and text-only large language models (LLMs)**.
+- Extracts structured semantic fields such as dealer name, tractor brand/model, horsepower, and payable amount.
+- Performs post-extraction normalization and cleanup to handle noisy OCR, spelling variations, and domain-specific naming inconsistencies.
+
+### 2. Visual Detection & Segmentation Branch
+- Uses **computer vision models** to detect and localize visual elements.
+- Identifies and segments **stamps and signatures** using object detection followed by instance segmentation for pixel-level accuracy.
+
+### 3. Merge & Consolidation
+- Outputs from both branches are merged into a **single JSON schema**.
+- Includes **confidence scoring** and **latency measurements**.
+- Confidence weighting favors semantic extraction while validating with visual evidence.
 
 ---
 
-##  Submission Structure
-# Extract-Refine-Segment (ERS) Pipeline for Document Intelligence
+## 🧠 Model Stack (High-Level)
 
-This repository contains the official implementation for the **IDFC Convolve 4.0 Challenge**. The **ERS Pipeline** is a modular, multi-stage architecture designed to handle the complexities of Indian tractor loan quotations, including layout volatility, multilingual scripts, and varying image quality.
+### Text Branch
+- **Qwen2.5-VL-7B-Instruct**  
+  Primary vision-language model for image-level semantic extraction.
+
+- **Qwen2.5-3B-Instruct**  
+  Lightweight text-only model for post-processing, normalization, and rule-based refinement.
+
+### Visual Branch
+- **YOLO (custom fine-tuned)**  
+  Detects bounding boxes for stamps and signatures.
+
+- **SAM 3 (Segment Anything Model)**  
+  Refines YOLO detections with precise instance segmentation.
+
+> **Execution Order**
+> - Text Branch: Qwen VL 7B → Qwen 3B  
+> - Visual Branch: YOLO → SAM 3  
+> - Final merge performed in the main pipeline with weighted confidence aggregation.
 
 ---
 
-## 📂 Submission Structure
+## 📦 Submission Structure
+
 ```text
 submission.zip
 │
-├── executable.py          # Main inference script (entry point)
-├── requirements.txt       # Environment dependencies
-├── README.md              # Project documentation (this file)
-├── Report.pdf             # Detailed Technical Report
-├── sample_output/         
-│   └── result.json        # Example of the final consolidated schema
-└── utils/                 # Core logic and model assets
-    └──  best.pt           # Fine-tuned YOLOv8s weights for Stamp/Signature detection
-    └── config.json.       # Hugging face token
+├── executable.py          # Main inference entry point
+├── requirements.txt       # Python dependencies
+├── README.md              # Project documentation
+├── Report.pdf             # Detailed technical report
+├── sample_output/
+│   └── result.json        # Example of final consolidated output schema
+└── utils/
+    ├── best.pt            # Fine-tuned YOLOv8s weights (stamp/signature detection)
+    └── config.json        # Hugging Face access token
+```
 
+---
 
-# Install dependencies
-pip install -r requirements.txt    
+## ⚙️ Installation
 
+Install all required dependencies using:
 
-## Gated Model Access (SAM 3)
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## ▶️ How to Run
+
+After installing the required dependencies, run the pipeline using the following command:
+
+```bash
+python executable.py IMAGE_PATH
+```
+
+### Arguments
+
+- `IMAGE_PATH`  
+  Absolute or relative path to the input document image (e.g., scanned tractor loan quotation).
+
+### Example
+
+```bash
+python executable.py sample_images/loan_quote.jpg
+```
+
+### Output
+
+- The pipeline performs end-to-end **extraction, refinement, and segmentation**.
+- The final consolidated output is generated in structured JSON format.
+- A reference output schema is available at:
+
+```
+sample_output/result.json
+```
+
+---
+
+## 🔒 Gated Model Access (SAM 3)
 
 This pipeline utilizes **Segment Anything Model 3 (SAM 3)**, which is hosted on a **gated Hugging Face repository**.
 
 ### Access Requirement
-- Ensure that you have accepted the usage terms at:  
-  **https://huggingface.co/facebook/sam3**
+
+Before execution, ensure that the usage terms for SAM 3 have been accepted at:
+
+```
+https://huggingface.co/facebook/sam3
+```
 
 ### Authentication Strategy
-- For the convenience of the evaluation committee, an **authorized Hugging Face access token** has been pre-configured in:
 
-### Important Note
-> While hardcoding access tokens is **not recommended** for production environments due to security best practices, this approach has been **intentionally adopted** here.
+For evaluation convenience, an **authorized Hugging Face access token** has been pre-configured in:
 
-- This design choice allows evaluators to run the pipeline **seamlessly**, without requiring:
-- Manual environment variable setup
-- CLI-based Hugging Face authentication
-- Additional configuration steps
+```
+utils/config.json
+```
 
-The goal is to ensure a **frictionless evaluation experience** while maintaining functional access to the gated SAM 3 model.
+> **Important Note**  
+> Hardcoding access tokens is **not recommended** for production environments due to security best practices.  
+> This approach has been **intentionally adopted** to ensure a **frictionless evaluation experience**, removing the need for:
+> - Manual environment variable configuration  
+> - CLI-based Hugging Face authentication  
+> - Additional setup steps  
+
+---
+
+## 🧠 Memory Management Strategy (16 GB VRAM Constraint)
+
+The pipeline is explicitly optimized to operate within a **16 GB VRAM** limit (e.g., NVIDIA T4), requiring careful GPU memory orchestration.
+
+### 1. Sequential Resource Cycling
+
+To avoid GPU Out-of-Memory (OOM) errors, models are loaded and unloaded sequentially:
+
+- **Load & Extract**  
+  The **Qwen-2.5-7B-VL** model is loaded to perform primary semantic extraction.
+
+- **Explicit Deallocation**
+  ```python
+  del model
+  ```
+
+- **Cache Clearance**
+  ```python
+  torch.cuda.empty_cache()
+  ```
+
+- **Re-Initialization**  
+  After memory is flushed, **YOLOv8** and **SAM 3** are initialized for geometric attestation (stamps, signatures, layout validation).
+
+---
+
+### 2. Hardware Scalability
+
+While sequential loading guarantees compatibility with 16 GB GPUs, it introduces additional latency.
+
+- **Recommended Hardware:**  
+  24 GB VRAM GPU (e.g., NVIDIA A5000)
+
+- **Observed Improvement:**  
+  End-to-end inference time reduces from approximately **29 seconds to 9 seconds**.
+
+---
 
 
-## Memory Management (16GB VRAM Strategy)
+## 📄 Additional Documentation
 
-[cite_start]The pipeline is specifically optimized to run within the strict **16GB VRAM** envelope of a single NVIDIA T4 GPU[cite: 148, 321].
-
-### **1. Sequential Resource Cycling**
-[cite_start]To avoid **Out-of-Memory (OOM)** issues, we implement a strict sequential lifecycle for model assets:
-* [cite_start]**Load & Extract:** The **Qwen-2.5-7B-VL** model is loaded into memory to perform the primary semantic extraction task[cite: 86, 152].
-* [cite_start]**Explicit Deletion:** Once the extraction is complete, the model is **explicitly deleted** from the GPU memory (`del model`).
-* [cite_start]**Cache Clearing:** We trigger `torch.cuda.empty_cache()` to ensure all allocated VRAM is released back to the system.
-* [cite_start]**Re-Initialization:** Only after the memory is flushed do we initialize the **YOLOv8** and **SAM 3** stacks for geometric attestation[cite: 113, 152].
-
-### **2. Hardware Scalability**
-[cite_start]While this manual management ensures stability on 16GB hardware, it introduces a latency bottleneck due to repeated loading/unloading cycles[cite: 113, 173]. 
-* [cite_start]**Recommendation:** This issue is easily overcome by using a **24GB VRAM GPU (e.g., NVIDIA A5000)**.
-* [cite_start]**Benefit:** Increased VRAM allows all models (Qwen-7B, Qwen-3B, YOLO, and SAM 3) to remain resident in memory simultaneously, reducing total processing time from **29 seconds to 9 seconds**[cite: 149, 150].
-
-
-
+For detailed information on the **architecture**, **end-to-end pipeline**, **cost analysis**, and **system diagrams**, please refer to the report provided in this repository.
